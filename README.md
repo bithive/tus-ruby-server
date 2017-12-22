@@ -332,6 +332,77 @@ The following checksum algorithms are supported for the `checksum` extension:
 * MD5
 * CRC32
 
+## Hooks
+
+Similar to the official `tusd` implementation, tus-ruby-server allows you to
+provide hooks so that your application may react to events during a file's
+lifecycle.  Unlike `tusd`, all hooks are blocking and may abort normal request
+processing.
+
+Hook methods accept two arguments, the upload ID and the `Upload-Metadata` hash.
+They must return nil (success) or an array where the first element is an HTTP
+status code (presumably 4xx or 5xx) and the second element is the error message.
+
+This mechanism can be used to perform additional authentication checks in
+your application or disable certain verbs (e.g. prevent GETs).
+
+#### Example: Rails integration
+
+In `lib/tus_hooks.rb`:
+```rb
+module TusHooks
+  # Example: Authentication based on `Tus::Info`
+  # NOTE: The uid param will always be nil because the upload does not exist yet
+  def self.pre_create uid, info
+    return nil if is_allowed?(info)
+    [ 401, 'Unauthorized' ]
+  end
+
+  # Example: Prevent users from retrieving files
+  def self.pre_retrieve uid, info
+    [ 405, 'Method Not Allowed' ]
+  end
+
+  private
+
+  # All hooks pass by default
+  def self.method_missing symbol, *args, &block
+    nil
+  end
+end
+```
+
+In `config/application.rb`:
+```rb
+config.autoload_paths += ["#{config.root}/lib"]
+```
+
+In `config.ru`:
+
+```rb
+require_relative 'config/environment'
+require 'tus/server'
+
+Tus::Server.opts[:hook_module] = TusHooks
+
+map '/tus' do
+  run Tus::Server
+end
+
+run Rails.application
+```
+
+The available hooks are:
+
+* `:pre_create`
+* `:post_create`
+* `:post_finish`
+* `:post_receive`
+* `:pre_retrieve`
+* `:pre_delete`
+
+See the [tusd hooks documentation] for more context.
+
 ## Tests
 
 Run tests with
@@ -369,3 +440,4 @@ The tus-ruby-server was inspired by [rubytus].
 [Goliath]: https://github.com/postrank-labs/goliath
 [EventMachine]: https://github.com/eventmachine/eventmachine
 [goliath-rack_proxy]: https://github.com/janko-m/goliath-rack_proxy
+[tusd hooks documentation]: https://github.com/tus/tusd/blob/master/docs/hooks.md

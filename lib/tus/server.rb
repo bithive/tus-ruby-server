@@ -26,6 +26,7 @@ module Tus
     opts[:max_size]        = nil
     opts[:expiration_time] = 7*24*60*60
     opts[:disposition]     = "inline"
+    opts[:hook_module]     = nil
 
     plugin :all_verbs
     plugin :default_headers, {"Content-Type" => ""}
@@ -74,6 +75,8 @@ module Tus
             "Upload-Expires"      => (Time.now + expiration_time).httpdate,
           )
 
+          call_hook!(:pre_create, nil, info)
+
           if info.concatenation?
             validate_partial_uploads!(info.partial_uploads)
 
@@ -85,6 +88,9 @@ module Tus
           end
 
           storage.update_info(uid, info.to_h)
+
+          call_hook!(:post_create, uid, info)
+          call_hook!(:post_finish, uid, info) if info.offset == info.length
 
           response.headers.update(info.headers)
 
@@ -146,6 +152,9 @@ module Tus
 
           if info.offset == info.length # last chunk
             storage.finalize_file(uid, info.to_h) if storage.respond_to?(:finalize_file)
+            call_hook!(:post_finish, uid, info)
+          else
+            call_hook!(:post_receive, uid, info)
           end
 
           storage.update_info(uid, info.to_h)
@@ -156,6 +165,8 @@ module Tus
 
         # GET /{uid}
         r.get do
+          call_hook!(:pre_retrieve, uid, info)
+
           validate_upload_finished!(info)
           range = handle_range_request!(info.length)
 
@@ -174,11 +185,20 @@ module Tus
 
         # DELETE /{uid}
         r.delete do
+          call_hook!(:pre_delete, uid, info)
+
           storage.delete_file(uid, info.to_h)
 
           no_content!
         end
       end
+    end
+
+    def call_hook!(hook, uid, info)
+      return unless opts[:hook_module]
+      result = opts[:hook_module].send(hook, uid, info) rescue nil
+      return if result == nil
+      error!(*result)
     end
 
     # Wraps the Rack input (request body) into a Tus::Input object, applying a
